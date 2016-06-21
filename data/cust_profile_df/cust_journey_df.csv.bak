@@ -778,7 +778,6 @@
 776,"store_visit:0,web_call:1,web_call:2,store_visit:3,not_buy",1,2566
 777,"store_visit:0,web_call:1,app:2,not_buy",1,156
 778,"store_visit:0,app:1,phone_call:2,buy",1,1078
-779,buy,1,1
 780,"store_visit:0,store_visit:1,facebook:2,web_call:3,buy",1,1511
 781,"facebook:0,facebook:1,twitter:2,app:3,not_buy",1,2132
 782,"app:0,phone_call:1,app:2,twitter:3,not_buy",1,2551

@@ -88,13 +88,30 @@ def flatmap_jouney_nodes(z):
         y.append('{}'.format(x[i]))
     return y
 
-
-def jouney_covered_check(nodelist, journey):
+def jouney_covered_check_lose(nodelist, journey):
     jnodes = journey.split(',')
     for anode in jnodes:
         if not anode in nodelist:
             return False
     return True
+
+# now i change to to exact match
+def jouney_covered_check(nodelist, journey):
+    jnodes = journey.split(',')
+    if(len(nodelist) != len(jnodes)):
+        return False
+    a = sorted(jnodes)
+    #print(a)
+    b = sorted(nodelist)
+    #print(b)
+    for i in range(len(jnodes)):
+        if a[i] != b[i]:
+            #print(i)
+            #print(jnodes[i] + '=' + nodelist[i])
+            return False
+    return True
+# jouney_covered_check(['store_visit:1', 'buy:99', 'store_visit:0', 'store_visit:2'],'store_visit:0,store_visit:1,buy')
+# jouney_covered_check(['store_visit:1', 'buy', 'store_visit:0' ],'store_visit:0,store_visit:1,buy')
 # jouney_covered_check({"store_visit:0":"y","store_visit:1":"y","store_visit:2":"y","buy:99":"y"}.keys(), 'web_call:0,app:1,web_chat:2,no_buy:99') 
 
 def collect_customer_from_journey(selected_journey_df):
@@ -104,7 +121,7 @@ def collect_customer_from_journey(selected_journey_df):
     return list(set(selected_id))
 
 
-def build_journey_with_customer_filter(lines_nonempty,cust_list_rdd):
+def build_journey_with_customer_filter(lines_nonempty,cust_list_rdd, rank_assending = False):
     # wordcounts is a temporary variable, for mapping original path to key-value (path, (1, cust_id)) 
     if cust_list_rdd is None: 
         wordcounts = lines_nonempty.map(lambda x:devide_cust_id_path(x)).map(lambda x:build_path2cust_list(x))
@@ -113,31 +130,22 @@ def build_journey_with_customer_filter(lines_nonempty,cust_list_rdd):
                     .map(lambda x:build_path2cust_list_with_sentiment(x))
     
     journey_rdd = wordcounts.reduceByKey(lambda x,y:reduce_jouney_count_concat(x,y))\
-                 .map(lambda x:(x[1][0],(x[0],x[1][1]))).sortByKey(False)
+                 .map(lambda x:(x[1][0],(x[0],x[1][1]))).sortByKey(ascending=rank_assending)
     #print(journey_rdd.count())
     #wordcounts.take(1)
 
     return journey_rdd # ,sankey_links, sankey_nodes
 
-
-# s1 = sqlContext.sql("SELECT * FROM journey_table WHERE visitor_count >= 600")
-def create_sankey_json(journey_rdd, NUMBER_OF_NODES):
-    # Create sankey json according to the journey. The the sankey_dict will be sent to front end for presentation.
-    sankey_links = journey_rdd.flatMap(flatmap_jouney).map(split_map_journey).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
-    #print(sankey_links.count())
-    # sankey_links.take(25)
-
-    sankey_nodes = journey_rdd.flatMap(flatmap_jouney_nodes).map(lambda x: (x, 1)).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
-    #print(sankey_nodes.count())
-    # sankey_nodes.collect()
-    
-    a = sankey_nodes.take(NUMBER_OF_NODES)
+def build_json_from_node_list_and_link(sankey_links,sankey_nodes, NUMBER_OF_NODES = 10):
+    # 
+    # I select only top NUMBER_OF_NODES
+    # sankey_nodes = sankey_nodes_all.take(NUMBER_OF_NODES)
+    a = sankey_nodes.take(NUMBER_OF_NODES) # .collect()
     node_dict = {}
     mynodes = []
     for i in range(len(a)):
         node_dict[a[i][1]] = i
         mynodes.append({"name":a[i][1]})
-
     ll = sankey_links.collect()
     mylinks = []
     # {"source":0,"target":1,"value":2}
@@ -146,18 +154,41 @@ def create_sankey_json(journey_rdd, NUMBER_OF_NODES):
             source_node = node_dict[ ll[i][1].split(',')[0]  ] 
             target_node = node_dict[ ll[i][1].split(',')[1]  ] 
             mylinks.append({"source":source_node,"target":target_node,"value":ll[i][0]})
-    sankey_dict = {"nodes":mynodes,
-              "links":mylinks}
+    sankey_dict = {"nodes":mynodes, "links":mylinks}
     return sankey_dict
 
+# s1 = sqlContext.sql("SELECT * FROM journey_table WHERE visitor_count >= 600")
+def create_sankey_json(journey_rdd, NUMBER_OF_NODES):
+    import json
+    #if rank_assending == True: # I need the rare journeys
+    #    sankey_links = sc.parallelize(journey_rdd.take(10)).flatMap(flatmap_jouney).map(split_map_journey).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
+    #    sankey_nodes = sc.parallelize(journey_rdd.take(10)).flatMap(flatmap_jouney_nodes).map(lambda x: (x, 1)).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
+    #    a = sankey_nodes.collect()
+    #    #print(json.dumps(sankey_nodes))
+    #else:
+    # Create sankey json according to the journey. The the sankey_dict will be sent to front end for presentation.
+    sankey_links = journey_rdd.flatMap(flatmap_jouney).map(split_map_journey).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
+    sankey_nodes_all = journey_rdd.flatMap(flatmap_jouney_nodes).map(lambda x: (x, 1)).reduceByKey(lambda x,y:x+y).map(lambda x:(x[1],x[0])).sortByKey(False)
+    
 
-def selected_cust_sankey_json(lines_nonempty, selected_cust_df,NUMBER_OF_NODES=10, sc=None):
-    if selected_cust_df is None:
-        cust_list_rdd = None
-    else:
-        cust_list = [tuple(x) for x in selected_cust_df[['cust_id','cust_id']].values]
-        cust_list_rdd = sc.parallelize(cust_list)
-    new_journey_rdd = build_journey_with_customer_filter(lines_nonempty,cust_list_rdd) # ,new_sankey_links, new_sankey_nodes
-    new_sankey_json = create_sankey_json(new_journey_rdd, NUMBER_OF_NODES)
-    return json.dumps(new_sankey_json)
+    return build_json_from_node_list_and_link(sankey_links,sankey_nodes_all, NUMBER_OF_NODES)
+
+    '''
+    node_dict = {}
+    mynodes = []
+    for i in range(len(a)):
+        node_dict[a[i][1]] = i
+        mynodes.append({"name":a[i][1]})
+    ll = sankey_links.collect()
+    mylinks = []
+    # {"source":0,"target":1,"value":2}
+    for i in range(len(ll)):
+        if (ll[i][1].split(',')[0]  in node_dict.keys() and ll[i][1].split(',')[1]  in node_dict.keys()  ):
+            source_node = node_dict[ ll[i][1].split(',')[0]  ] 
+            target_node = node_dict[ ll[i][1].split(',')[1]  ] 
+            mylinks.append({"source":source_node,"target":target_node,"value":ll[i][0]})
+    sankey_dict = {"nodes":mynodes, "links":mylinks}
+    return sankey_dict
+    '''
+
 
